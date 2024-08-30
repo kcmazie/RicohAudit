@@ -1,4 +1,4 @@
-#==============================================================================
+<#==============================================================================
          File Name : RicohAudit.ps1
    Original Author : Kenneth C. Mazie (kcmjr AT kcmjr DOT com)
                    :
@@ -39,5 +39,8 @@
                    : v3.00 - 02-21-24 - Added new data from spreadsheet to report. 
                    : v3.10 - 04-15-24 - Added check to not send email if device is offline.
                    : v3.20 - 05-31-24 - Switched columns so that toner levels show first
+                   : v3.30 - 06-06-24 - Added weekend abort
+                   : v4.00 - 08-30-24 - Added high priority email option if toner is out and color
+                   :                  - adjustment in report for DNS fail or toner out.
                    :
-#===============================================================================#
+#===============================================================================#>
