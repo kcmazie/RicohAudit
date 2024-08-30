@@ -39,6 +39,9 @@
                    : v3.00 - 02-21-24 - Added new data from spreadsheet to report. 
                    : v3.10 - 04-15-24 - Added check to not send email if device is offline.
                    : v3.20 - 05-31-24 - Switched columns so that toner levels show first
+                   : v3.30 - 06-06-24 - Added weekend abort
+                   : v4.00 - 08-30-24 - Added high priority email option if toner is out and color
+                   :                  - adjustment in report for DNS fail or toner out.
                    :
 #===============================================================================#>
 #requires -version 5.0
@@ -59,6 +62,11 @@ If ($Debug){
     $Console = $True
 }
 $erroractionpreference = "stop"
+
+$Today =(get-date).DayOfWeek  #--[ Dont run on weekends ]-----------
+If (($Today -eq "Saturday") -or ($Today -eq "Sunday")){
+   break
+}
 
 #==[ Functions, Arrays, & Lists ]===========================================
 Function InstallModules{
@@ -141,10 +149,15 @@ Function SendEmail ($MessageBody,$ExtOption) {
     $Email = New-Object System.Net.Mail.MailMessage  
     $Email.IsBodyHTML = $true
     $Email.From = $ExtOption.EmailSender
+
+    If ($ExtOption.Priority){
+        $Email.Priority = "High"
+    }
+
     If ($ExtOption.ConsoleState){  #--[ If running out of an IDE console, send only to the user for testing ]-- 
         $Email.To.Add($ExtOption.EmailAltRecipient)  
     }Else{
-        If ($ExtOption.Alert){  #--[ If a device failed self-test or trigger day is matched send to main recipient ]--
+        If (($ExtOption.Alert) -or ($ExtOption.Priority)){  #--[ If a device failed self-test or trigger day is matched send to main recipient ]--
             $Email.To.Add($ExtOption.EmailRecipient)  
             #$Email.To.Add($ExtOption.EmailAltRecipient)   #--[ In case this user isn't part of the group email ]--  
             ForEach ($Address in ($ExtOption.AddEmail.split(";"))){
@@ -157,11 +170,14 @@ Function SendEmail ($MessageBody,$ExtOption) {
 
     $Email.Subject = "Ricoh Printer Status Report"
     $Email.Body = $MessageBody
+
     If ($ExtOption.Debug){
         $Msg="-- Email Parameters --" 
         StatusMsg $Msg "yellow" $ExtOption
         $Msg="Error Msg     = "+$_.Error.Message
         StatusMsg $Msg "yellow" $ExtOption
+        $Msg="Priority      = "+$ExtOption.Priority
+        StatusMsg $Msg "yellow" $ExtOption        
         $Msg="Exception Msg = "+$_.Exception.Message
         StatusMsg $Msg "yellow" $ExtOption
         $Msg="Local Sender  = "+$ThisUser
@@ -171,6 +187,7 @@ Function SendEmail ($MessageBody,$ExtOption) {
         $Msg="SMTP Server   = "+$ExtOption.SmtpServer
         StatusMsg $Msg "yellow" $ExtOption
     }
+
     $ErrorActionPreference = "stop"
     Try {
         If ($ExtOption.Alert){
@@ -428,7 +445,7 @@ If (Test-Path -Path "$PSScriptroot\IPList.txt"){
     }
 
     StatusMsg "Reading Spreadsheet data..." "Magenta" $ExtOption
-    Write-Host "   ." -NoNewline -ForegroundColor Cyan
+    If ($ExtOption.ConsoleState){Write-Host "   ." -NoNewline -ForegroundColor Cyan}
     Do {
         $CurrentIP = $WorkSheet.Cells.Item($Row,14).Text 
         $Hostname = $WorkSheet.Cells.Item($Row,13).Text 
@@ -438,7 +455,7 @@ If (Test-Path -Path "$PSScriptroot\IPList.txt"){
         $Contact = $WorkSheet.Cells.Item($Row,6).Text 
         $Email = $WorkSheet.Cells.Item($Row,7).Text 
         If ($CurrentIP -ne $PreviousIP){  #--[ Make sure IPs are added only once ]--
-            Write-Host "." -NoNewline -ForegroundColor Cyan
+            If ($ExtOption.ConsoleState){Write-Host "." -NoNewline -ForegroundColor Cyan}
             $IPList += ,@($CurrentIP+";"+$Hostname+";"+$Department+";"+$Building+";"+$Address+";"+$Contact+";"+$Email) 
             $PreviousIP = $CurrentIP
         }
@@ -452,10 +469,10 @@ If (Test-Path -Path "$PSScriptroot\IPList.txt"){
         $IPlist = "No Entries"
     }
 
-    Write-Host ""
+    If ($ExtOption.ConsoleState){Write-Host ""}
     $Msg = "$Counter Total IP addresses detected."
     StatusMsg $Msg "Magenta" $ExtOption
-    Write-Host ""
+    If ($ExtOption.ConsoleState){Write-Host ""}
     $Excel.DisplayAlerts = $false
     Try{
         $WorkBook.Close($true)
@@ -525,11 +542,12 @@ If ($Null -eq $TargetList){
     $HtmlData += '<td><center>Building</td><td><center>Address</td>'
     $HtmlData += '<td><center>Mfg</td><td>Model</td><td><center>Serial</td><td><center>Firmware</td></tr>'
     ForEach ($Target in $TargetList | Where-Object {$_.Substring(0,1) -ne "#"}){
-        $Low = 0
+        $Low = $False
+        $InkOut = $False
         If ($Console){Write-Host "" } #`nCurrent Target  :"$Target -ForegroundColor Yellow }
         $Obj = New-Object -TypeName psobject   #--[ Collection for Results ]--
         Try{
-            $HostLookup = (nslookup $Target.Split(";")[0] $Env:LogonServer 2>&1) 
+            $HostLookup = (nslookup $Target.Split(";")[0] ($Env:LogonServer.Split("\")[2]) 2>&1)          
             $Obj | Add-Member -MemberType NoteProperty -Name "Hostname" -Value (($HostLookup[3].split(":")[1].TrimStart()).Split(".")[0]).ToUpper() -force
             $Obj | Add-Member -MemberType NoteProperty -Name "HostnameLookup" -Value $True
         }Catch{
@@ -596,12 +614,12 @@ If ($Null -eq $TargetList){
                     } #           
                 }
             }
-            Write-Host "."
+            If ($ExtOption.ConsoleState){Write-Host "."}
         }Else{
             $Obj | Add-Member -MemberType NoteProperty -Name "Connection" -Value "Offline" -force
         }
 
-        If ($Console){
+        If ($ExtOption.ConsoleState){
             If ($obj.HostNameLookup){
                 Write-Host "  Hostname :"$obj.Hostname -ForegroundColor Magenta
             }Else{
@@ -629,40 +647,67 @@ If ($Null -eq $TargetList){
         }
 
         $HtmlData += '<tr>'
-        If ($obj.HostNameLookup){
-            $HtmlData += '<td><font color=green>'+$Obj.HostName+'</font></td>'
-        }Else{
-            $HtmlData += '<td><font color=red>'+$Obj.HostName+'</font></td>'
-        }
         If ($obj.Connection -eq "Offline"){
-            $HtmlData += '<td><strong><font color=red>'+$Obj.Connection+'</strong></font></td>'
+            $StatusCol = '<td><strong><font color=red>'+$Obj.Connection+'</strong></font></td>'
         }Else{
-            $HtmlData += '<td><font color=green>'+$Obj.Connection+'</font></td>'
+            $StatusCol = '<td><font color=green>'+$Obj.Connection+'</font></td>'
         }
         If ($Obj.BlackLevel -le $TriggerLevel){
-            $HtmlData += '<td><strong><font color=red>'+$Obj.BlackLevel+'</strong></font></td>'
-            $Low ++
+            $BlackCol = '<td><strong><font color=red>'+$Obj.BlackLevel+'</strong></font></td>'
+            $Low = $True
+            If ([Int]$Obj.BlackLevel -le 0){
+                $InkOut = $True
+                $ExtOption | Add-Member -MemberType NoteProperty -Name "Priority" -Value $InkOut -force
+            }
         }Else{
-            $HtmlData += '<td>'+$Obj.BlackLevel+'</td>'
+            $BlackCol = '<td>'+$Obj.BlackLevel+'</td>'
         }   
         If ($Obj.CyanLevel -le $TriggerLevel){
-            $HtmlData += '<td><strong><font color=red>'+$Obj.CyanLevel+'</strong></font></td>'
-            $Low ++
+            $CyanCol = '<td><strong><font color=red>'+$Obj.CyanLevel+'</strong></font></td>'
+            $Low = $True
+            If ([Int]$Obj.CyanLevel -le 0){
+                $InkOut = $True
+                $ExtOption | Add-Member -MemberType NoteProperty -Name "Priority" -Value $InkOut -force
+            }
         }Else{
-            $HtmlData += '<td>'+$Obj.CyanLevel+'</td>'
+            $CyanCol = '<td>'+$Obj.CyanLevel+'</td>'
         }
         If ($Obj.MagentaLevel -le $TriggerLevel){
-            $HtmlData += '<td><strong><font color=red>'+$Obj.MagentaLevel+'</strong></font></td>'
-            $Low ++
+            $MagCol = '<td><strong><font color=red>'+$Obj.MagentaLevel+'</strong></font></td>'
+            $Low = $True        
+            If ([Int]$Obj.MagentaLevel -le 0){
+                $InkOut = $True
+                $ExtOption | Add-Member -MemberType NoteProperty -Name "Priority" -Value $InkOut -force
+            }
         }Else{
-            $HtmlData += '<td>'+$Obj.MagentaLevel+'</td>'
+            $MagCol = '<td>'+$Obj.MagentaLevel+'</td>'
         }
         If ($Obj.YellowLevel -le $TriggerLevel){
-            $HtmlData += '<td><strong><font color=red>'+$Obj.YellowLevel+'</strong></font></td>'
-            $Low ++
+            $YellowCol = '<td><strong><font color=red>'+$Obj.YellowLevel+'</strong></font></td>'
+            $Low = $True
+            If ([Int]$Obj.YellowLevel -le 0){
+                $InkOut = $True
+                $ExtOption | Add-Member -MemberType NoteProperty -Name "Priority" -Value $InkOut -force
+            }
         }Else{
-            $HtmlData += '<td>'+$Obj.YellowLevel+'</td>'
+            $YellowCol = '<td>'+$Obj.YellowLevel+'</td>'
         }
+
+        If ($obj.HostNameLookup){
+            If ($InkOut){
+                $HostCol = '<td><font color=green>'+$Obj.HostName+'<br><strong><font color=red><center>Toner Out!</center></strong></font></td>'
+            }Else{
+                $HostCOl = '<td><font color=green>'+$Obj.HostName+'</font></td>'
+            }
+        }Else{
+            If ($InkOut){
+                $HostCol = '<td><font color=red>'+$Obj.HostName+'<br><strong><center>DNS & Toner Issues !</center></strong></font></td>'
+            }Else{
+                $HostCol = '<td><font color=red>'+$Obj.HostName+'<br><strong><center>DNS Issue !</center></strong></font></td>'
+            }
+        }
+
+        $HtmlData += $HostCol+$StatusCol+$BlackCol+$CyanCol+$MagCol+$YellowCol
         $HtmlData += '<td>'+$Obj.IPAddress+'</td>'
         $HtmlData += '<td>'+$Obj.Contact+'</td>'
         $HtmlData += '<td>'+$Obj.Department+'</td>'
@@ -673,7 +718,7 @@ If ($Null -eq $TargetList){
         $HtmlData += '<td>'+$Obj.Serial+'</td>'
         $HtmlData += '<td>'+$Obj.Firmware+'</td>'
         $HtmlData += '</tr>'
-        If (($Low -gt 0) -and ($Obj.Connection -ne "Offline")){
+        If (($Low) -and ($Obj.Connection -ne "Offline")){
             $AddEmail = $AddEmail+$obj.Email+";"            
         }
     }
@@ -693,7 +738,10 @@ $HtmlNotice += '&nbsp;&nbsp;Printers with low toner levels have those levels den
 $HtmlNotice += '&nbsp;&nbsp;Please note that ordering of consumable items such as toner are the responsibility of the end user or department.'
 $HtmlNotice += '<br><br>We recommend ordering toner now so that the printer does not completely run out.&nbsp;&nbsp;To order toner, please visit <a href="https://MyRicoh.com">MyRicoh.com</a>. '
 $HtmlNotice += "<br><br>If you don't have a MyRicoh account, please submit a request via <a href='https://ithelp.ah.org'>ithelp.ah.org</a> and someone will provide you with instructions."
-$HtmlNotice += '<br><br>Thanks,<br>Adventist Health Lodi Memorial IT<br><br>'
+If ($extOption.Priority){
+    $HtmlNotice += '<br><br><font color=red><strong>NOTICE!!!  At lease one printer has run out of toner.  Please check below for a negative number.</strong>'
+}
+$HtmlNotice += '<br><br><font color=black>Thanks,<br>Adventist Health Lodi Memorial IT<br><br>'
 
 #--[ Only add the notice and/or send email if something triggered the 20% limit ]--
 If ($Null -ne $ExtOption.AddEmail){
@@ -704,7 +752,7 @@ If ($Null -ne $ExtOption.AddEmail){
     $HtmlData = $HtmlHeader+$HtmlData
 }
 
-Write-Host ""
+If ($ExtOption.ConsoleState){Write-Host ""}
 $Msg = "Ready to send report..."
 StatusMsg $Msg "Yellow" $ExtOption
     
@@ -719,4 +767,4 @@ If ($Env:Username.SubString(0,1) -eq "a"){       #--[ Filter out admin accounts 
 
 SendEmail $HtmlData $ExtOption
 
-If ($Console){Write-Host "`n--- Completed ---" -foregroundcolor red}
+If ($ExtOption.ConsoleState){Write-Host "`n--- Completed ---" -foregroundcolor red}
