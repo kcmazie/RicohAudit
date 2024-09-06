@@ -42,5 +42,7 @@
                    : v3.30 - 06-06-24 - Added weekend abort
                    : v4.00 - 08-30-24 - Added high priority email option if toner is out and color
                    :                  - adjustment in report for DNS fail or toner out.
+                   : v4.10 - 09-03-24 - Fixed DNS resolution bug.
+                   : v4.20 - 09-06-24 - Added line to report to denote console/debug mode.
                    :
 #===============================================================================#>
