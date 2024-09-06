@@ -42,6 +42,8 @@
                    : v3.30 - 06-06-24 - Added weekend abort
                    : v4.00 - 08-30-24 - Added high priority email option if toner is out and color
                    :                  - adjustment in report for DNS fail or toner out.
+                   : v4.10 - 09-03-24 - Fixed DNS resolution bug.
+                   : v4.20 - 09-06-24 - Added line to report to denote console/debug mode.
                    :
 #===============================================================================#>
 #requires -version 5.0
@@ -353,6 +355,7 @@ $ExtOption = LoadConfig $ExtOption $ConfigFile
 If ($NUll -ne $ExtOption.SmtpServer){
     StatusMsg "External config file loaded successfully." "Magenta" $ExtOption
 }
+Add-content -path $ExtOption.LogFile -value (Get-Date -f MM-dd-yyyy_hh:mm:ss)
 
 #--[ Detect Runspace ]--
 $ExtOption = GetConsoleHost $ExtOption 
@@ -519,6 +522,9 @@ $HtmlHeader += '
 
 $HtmlData += '<table class="myTable">'
 $HtmlData += '<tr><td colspan='+$ColSpan+'><center><h2 style="color: DarkCyan"><strong>Ricoh Printer Status Report</strong></h2></center></td></tr>'
+If ($ExtOption.ConsoleState){
+    $HtmlData += '<tr><td colspan='+$ColSpan+'><center><font color=Magenta>--- Script running in Console/Debug mode ---</center></td></tr>'
+}
 $HtmlData += '<tr><td colspan='+$ColSpan+'><center><font color=black>Levels displayed below indicate toner percent remaining.&nbsp;&nbsp;&nbsp;Alert triggered at levels below '+$TriggerLevel+'%.</center></td></tr>'
 
 If ($Null -eq $TargetList){
@@ -551,12 +557,18 @@ If ($Null -eq $TargetList){
             $Obj | Add-Member -MemberType NoteProperty -Name "Hostname" -Value (($HostLookup[3].split(":")[1].TrimStart()).Split(".")[0]).ToUpper() -force
             $Obj | Add-Member -MemberType NoteProperty -Name "HostnameLookup" -Value $True
         }Catch{
-            #$Obj | Add-Member -MemberType NoteProperty -Name "Hostname" -Value "DNS Not Found" -force
-            $Obj | Add-Member -MemberType NoteProperty -Name "Hostname" -Value $Target.Split(";")[1] -force
-            $Obj | Add-Member -MemberType NoteProperty -Name "HostnameLookup" -Value $False
-            If ($ExtOption.Debug){
-                Add-Content -path $ExtOption.Logfile -value $_.Error.Message
-                Add-Content -path $ExtOption.Logfile -value $_.Exception.Message
+            Try{
+                $HostLookup = (nslookup $Target.Split(";")[0] 2>&1)          
+                $Obj | Add-Member -MemberType NoteProperty -Name "Hostname" -Value (($HostLookup[3].split(":")[1].TrimStart()).Split(".")[0]).ToUpper() -force
+                $Obj | Add-Member -MemberType NoteProperty -Name "HostnameLookup" -Value $True
+            }Catch{
+                #$Obj | Add-Member -MemberType NoteProperty -Name "Hostname" -Value "DNS Not Found" -force
+                $Obj | Add-Member -MemberType NoteProperty -Name "Hostname" -Value $Target.Split(";")[1] -force
+                $Obj | Add-Member -MemberType NoteProperty -Name "HostnameLookup" -Value $False
+                If ($ExtOption.Debug){
+                    Add-Content -path $ExtOption.Logfile -value $_.Error.Message
+                    Add-Content -path $ExtOption.Logfile -value $_.Exception.Message
+                }
             }
         }
 
