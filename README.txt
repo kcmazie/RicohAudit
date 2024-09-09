@@ -44,5 +44,6 @@
                    :                  - adjustment in report for DNS fail or toner out.
                    : v4.10 - 09-03-24 - Fixed DNS resolution bug.
                    : v4.20 - 09-06-24 - Added line to report to denote console/debug mode.
+                   : v4.30 - 09-09-24 - Added option to specify a DNS server for use in nslookup.
                    :
 #===============================================================================#>
