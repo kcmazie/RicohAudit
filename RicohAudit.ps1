@@ -44,6 +44,7 @@
                    :                  - adjustment in report for DNS fail or toner out.
                    : v4.10 - 09-03-24 - Fixed DNS resolution bug.
                    : v4.20 - 09-06-24 - Added line to report to denote console/debug mode.
+                   : v4.30 - 09-09-24 - Added option to specify a DNS server for use in nslookup.
                    :
 #===============================================================================#>
 #requires -version 5.0
@@ -104,6 +105,7 @@ Function LoadConfig ($ExtOption,$ConfigFile){  #--[ Read and load configuration 
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "ExcelFilePath" -Value $Config.Settings.General.ExcelFilePath
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "SmtpServer" -Value $Config.Settings.General.SmtpServer
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "SmtpPort" -Value $Config.Settings.General.SmtpPort
+        $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "DNS" -Value $Config.Settings.General.DNS
     }Else{
         StatusMsg "MISSING XML CONFIG FILE.  File is required.  Script aborted..." " Red" $ExtOption
         break;break;break
@@ -553,7 +555,11 @@ If ($Null -eq $TargetList){
         If ($Console){Write-Host "" } #`nCurrent Target  :"$Target -ForegroundColor Yellow }
         $Obj = New-Object -TypeName psobject   #--[ Collection for Results ]--
         Try{
-            $HostLookup = (nslookup $Target.Split(";")[0] ($Env:LogonServer.Split("\")[2]) 2>&1)          
+            If ($Null -eq $ExtOption.DNS){
+                $HostLookup = (nslookup $Target.Split(";")[0] ($Env:LogonServer.Split("\")[2]) 2>&1)          
+            }Else{
+                $HostLookup = (nslookup $Target.Split(";")[0] ($ExtOption.DNS) 2>&1)          
+            }
             $Obj | Add-Member -MemberType NoteProperty -Name "Hostname" -Value (($HostLookup[3].split(":")[1].TrimStart()).Split(".")[0]).ToUpper() -force
             $Obj | Add-Member -MemberType NoteProperty -Name "HostnameLookup" -Value $True
         }Catch{
