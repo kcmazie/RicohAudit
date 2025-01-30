@@ -6,16 +6,44 @@
                    : extract printer IP addresses, and then poll each using SNMP for
                    : current toner levels.  It then emails the results to the designated
                    : recipient(s) using an HTML form.  Current OID specifications are 
-                   : for Ricoh printers.
+                   : for Ricoh printers.  If desired, the script may be run with the 
+                   : "remote" option set to "true" and it will create the IP input file
+                   : on a remote system and exit.  This allows compensating for issues
+                   : accessing the Excel file from the system running the full script.
+                   : The remote otion on the remote system would be left as "false" which
+                   : causes the script to only look in it's local folder for the IP file
+                   : and not attempt to load the spreadsheet. 
                    :
          Arguments : N/A
                    :
+   External Config : An external XML configuration file is required to set customized settings.
+                   : In this way the script becomes generic and can be posted online
+                   : with no potentially leaked private data.  Create this in the script folder
+                   : with the same name as the script and .XML
+                   : <?xml version="1.0" encoding="utf-8"?>
+                   :    <Settings>
+                   :        <General>
+	               :            <TriggerLevel>20</TriggerLevel>       <!-- NOTE: Level at which toner triggers alert -->
+	               :		    <DNS>8.8.8.8</DNS>
+	               :            <SmtpServer>mymail.myorg.com</SmtpServer>
+	               :            <SmtpPort>25</SmtpPort>
+	               :		    <EmailRecipient>groupemail@myorg.com</EmailRecipient>
+	               :		    <EmailAltRecipient>me@myorg.com</EmailAltRecipient>
+	               :		    <EmailSender>RicohPrinters@myorg.com</EmailSender>
+	               :		    <ExcelFileName>Ricoh_Master_Inventory.xlsx</ExcelFileName>
+	               :		    <ExcelFilePath>C:\Users\me\Documents\Ricoh</ExcelFilePath>
+	               :            <Remote>false</Remote>
+	               :	        <RemoteHost>server01</RemoteHost>
+	               :	        <RemotePath>c$\scripts\ricohaudit</RemotePath>
+	               :        </General>
+	               :    </Settings> 
+                   :                   
       Requirements : PowerShell v5 or newer.  
                    : Net-SNMP available in your path.  http://www.net-snmp.org/
                    : PowerShell SNMP module.  https://github.com/lahell/SNMPv3
                    :
              Notes : Adjust SNMP settings as needed.  To bypass Excel place a flat text 
-                   : file in the  script folder name IPLIST.TXT with one IP per line.
+                   : file in the script folder name IPLIST.TXT with one IP per line.
                    : The following info is to allow extraction directly from a Teams or SharePoint share:
                    :    PnP PowerShell   https://github.com/pnp/powershell
                    :    PnP PowerShell is a .NET 6 based PowerShell Module providing over 
@@ -23,7 +51,7 @@
                    :    SharePoint Online, Microsoft Teams, Microsoft Project, Security 
                    :    & Compliance, Azure Active Directory, and more. Requires PS v7.2 or newer.
                    :
-          Warnings : None.  Excel is opened read-only.
+          Warnings : None.  Excel is opened read-only.  Run once manually to assure that modules get installed.
                    :
              Legal : Public Domain. Modify and redistribute freely. No rights reserved.
                    : SCRIPT PROVIDED "AS IS" WITHOUT WARRANTIES OR GUARANTEES OF
@@ -45,6 +73,10 @@
                    : v4.10 - 09-03-24 - Fixed DNS resolution bug.
                    : v4.20 - 09-06-24 - Added line to report to denote console/debug mode.
                    : v4.30 - 09-09-24 - Added option to specify a DNS server for use in nslookup.
+                   : v5.00 - 01-29-25 - Added option to run from an external server.  Adjusted error 
+                   :                  - handling, adjusted email send options, moved triggerlevel to
+                   :                  - XML file, switched to per-run log file and 10 copy retention,
+                   :                  - added log file to email as an attachment when remote is true. 
                    :
 #===============================================================================#>
 #requires -version 5.0
@@ -53,9 +85,11 @@ clear-host
 [string]$DateTime = Get-Date -Format MM-dd-yyyy_HHmmss 
 $CloseAnyOpenXL = $False
 $ExtOption = New-Object -TypeName psobject #--[ Object to hold runtime options ]--
-$ScriptName = ($MyInvocation.MyCommand.Name).split(".")[0] 
-$ExtOption | Add-Member -Force -MemberType NoteProperty -Name "LogFile" -Value ($PSScriptRoot+'\'+$ScriptName+'.log')
-$TriggerLevel = 20
+$ScriptName = ($MyInvocation.MyCommand.Name).Replace(".ps1","" ) 
+$ExtOption | Add-Member -Force -MemberType NoteProperty -Name "LogFile" -Value ($PSScriptRoot+'\'+$ScriptName+"_"+$DateTime+'.log')
+
+#--[ Only retain 10 of the most recent log files ]--
+Get-ChildItem -Path $PSScriptRoot | Where-Object {(-not $_.PsIsContainer) -and ($_.Name -like "*log*")} | Sort-Object -Descending -Property LastTimeWrite | Select-Object -Skip 10 | Remove-Item | Out-Null
 
 #--[ Runtime Adjustments ]--
 $Console = $false
@@ -80,6 +114,9 @@ Function InstallModules{
             Install-Module -Name PnP.PowerShell -RequiredVersion 1.12.0
         }
     }Catch{
+        Write-Host "Error installing PNP module" -ForegroundColor "Red"
+        Add-Content -path $ExtOption.Logfile -value $_.Error.Message
+        Add-Content -path $ExtOption.Logfile -value $_.Exception.Message 
     }
 
     Try{
@@ -99,13 +136,18 @@ Function LoadConfig ($ExtOption,$ConfigFile){  #--[ Read and load configuration 
     StatusMsg "Loading external config file..." "Magenta" $ExtOption
     if (Test-Path -Path $ConfigFile -PathType Leaf){                       #--[ Error out if configuration file doesn't exist ]--
         [xml]$Config = Get-Content $ConfigFile  #--[ Read & Load XML ]--    
+        $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "TriggerLevel" -Value $Config.Settings.General.TriggerLevel
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "EmailRecipient" -Value $Config.Settings.General.EmailRecipient
+        $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "EmailAltRecipient" -Value $Config.Settings.General.EmailAltRecipient
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "EmailSender" -Value $Config.Settings.General.EmailSender
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "ExcelFileName" -Value $Config.Settings.General.ExcelFileName
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "ExcelFilePath" -Value $Config.Settings.General.ExcelFilePath
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "SmtpServer" -Value $Config.Settings.General.SmtpServer
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "SmtpPort" -Value $Config.Settings.General.SmtpPort
         $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "DNS" -Value $Config.Settings.General.DNS
+        $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "Remote" -Value $Config.Settings.General.Remote
+        $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "RemoteHost" -Value $Config.Settings.General.RemoteHost
+        $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "RemotePath" -Value $Config.Settings.General.RemotePath
     }Else{
         StatusMsg "MISSING XML CONFIG FILE.  File is required.  Script aborted..." " Red" $ExtOption
         break;break;break
@@ -143,11 +185,13 @@ Function StatusMsg ($Msg, $Color, $ExtOption){
         $Color = "Magenta"
     }
     Add-content -path $ExtOption.LogFile -value $msg
-    Write-Host "-- Script Status: $Msg" -ForegroundColor $Color
+    If ($ExtOption.ConsoleState){
+        Write-Host "-- Script Status: $Msg" -ForegroundColor $Color
+    }
     $Msg = ""
 }
 
-Function SendEmail ($MessageBody,$ExtOption) {    
+Function SendEmail ($MessageBody,$ExtOption) {      
     $ErrorActionPreference = "Stop"
     $Smtp = New-Object Net.Mail.SmtpClient($ExtOption.SmtpServer,$ExtOption.SmtpPort) 
     $Email = New-Object System.Net.Mail.MailMessage  
@@ -159,11 +203,12 @@ Function SendEmail ($MessageBody,$ExtOption) {
     }
 
     If ($ExtOption.ConsoleState){  #--[ If running out of an IDE console, send only to the user for testing ]-- 
-        $Email.To.Add($ExtOption.EmailAltRecipient)  
+        $Email.To.Add($ExtOption.EmailAltRecipient)         
+        $Email.Attachments.Add($ExtOption.LogFile)
     }Else{
         If (($ExtOption.Alert) -or ($ExtOption.Priority)){  #--[ If a device failed self-test or trigger day is matched send to main recipient ]--
             $Email.To.Add($ExtOption.EmailRecipient)  
-            #$Email.To.Add($ExtOption.EmailAltRecipient)   #--[ In case this user isn't part of the group email ]--  
+            #$Email.To.Add($ExtOption.EmailAltRecipient)    #--[ In case this user isn't part of the group email ]--  
             ForEach ($Address in ($ExtOption.AddEmail.split(";"))){
                 If ($Address -ne ""){
                     $Email.To.Add($Address)
@@ -172,42 +217,33 @@ Function SendEmail ($MessageBody,$ExtOption) {
         }
     }
 
+$email.to.add("maziekc@ah.org")
     $Email.Subject = "Ricoh Printer Status Report"
     $Email.Body = $MessageBody
 
-    If ($ExtOption.Debug){
-        $Msg="-- Email Parameters --" 
-        StatusMsg $Msg "yellow" $ExtOption
-        $Msg="Error Msg     = "+$_.Error.Message
-        StatusMsg $Msg "yellow" $ExtOption
-        $Msg="Priority      = "+$ExtOption.Priority
-        StatusMsg $Msg "yellow" $ExtOption        
-        $Msg="Exception Msg = "+$_.Exception.Message
-        StatusMsg $Msg "yellow" $ExtOption
-        $Msg="Local Sender  = "+$ThisUser
-        StatusMsg $Msg "yellow" $ExtOption
-        $Msg="Recipient     = "+$ExtOption.EmailRecipient
-        StatusMsg $Msg "yellow" $ExtOption
-        $Msg="SMTP Server   = "+$ExtOption.SmtpServer
-        StatusMsg $Msg "yellow" $ExtOption
-    }
-
-    $ErrorActionPreference = "stop"
     Try {
         If ($ExtOption.Alert){
+            $ErrorActionPreference = "silentlycontinue"
             $Smtp.Send($Email)
             If ($ExtOption.ConsoleState){Write-Host `n"--- Email Sent ---" -ForegroundColor red }
+            $ErrorMsg = "None"
+            $ExceptionMsg = "N/A"
+            Start-Sleep -millisec 500
         }
     }Catch{
         Write-host "-- Error sending email --" -ForegroundColor Red
-        Write-host "Error Msg     = "$_.Error.Message
-        StatusMsg  $_.Error.Message "red" $ExtOption
-        Write-host "Exception Msg = "$_.Exception.Message
-        StatusMsg  $_.Exception.Message "red" $ExtOption
-        Write-host "Local Sender  = "$ThisUser
-        Write-host "Recipient     = "$ExtOption.EmailRecipient
-        Write-host "SMTP Server   = "$ExtOption.SmtpServer
-        add-content -path $psscriptroot -value  $_.Error.Message
+    }
+
+    If ($ExtOption.Debug){
+        $Msg="-- Debug Parameters --" 
+        StatusMsg $Msg "yellow" $ExtOption
+        $Msg="Priority       = "+$Email.Priority
+        StatusMsg $Msg "yellow" $ExtOption 
+        $Msg="Send Error     = "+$ErrorMsg
+        StatusMsg $Msg "yellow" $ExtOption
+        $Msg="Send Exception = "+$ExceptionMsg
+        StatusMsg $Msg "yellow" $ExtOption
+        $ExtOption 
     }
 }
 
@@ -349,11 +385,13 @@ $ErrorActionPreference = "stop"
 $Msg = "--[ Begin ]------------------------------------" 
 StatusMsg $Msg "Yellow" $ExtOption
 
+#--[ Load required PowerShell modules ]--
 InstallModules
 
 #--[ Load external XML options file ]--
-$ConfigFile = $PSScriptRoot+"\"+($MyInvocation.MyCommand.Name.Split("_")[0]).Split(".")[0]+".xml"
+$ConfigFile = $PSScriptRoot+"\"+$MyInvocation.MyCommand.Name.Replace(".ps1", ".xml")
 $ExtOption = LoadConfig $ExtOption $ConfigFile
+
 If ($NUll -ne $ExtOption.SmtpServer){
     StatusMsg "External config file loaded successfully." "Magenta" $ExtOption
 }
@@ -384,10 +422,12 @@ If (Test-Path -Path "$PSScriptroot\IPList.txt"){
     #<ExcelFilePath> https://adventisthealthwest.sharepoint.com/:x:/r/sites/AHLMITTechnologyTeam/Shared%20Documents/General/Inventory/Ricoh
     #onedrivepath  = "C:\Users\maziekc\OneDrive - ADVENTIST HEALTH SYSTEM WEST\General - AHLM IT Technology Team\Inventory\Ricoh"
 
-    # $NetworkFile = $ExtOption.ExcelFilePath+"/"+$ExtOption.ExcelFileName
     $SourceFile = $ExtOption.ExcelFilePath+"\"+$ExtOption.ExcelFileName
     $LocalFile = $PSScriptRoot+"\"+$ExtOption.ExcelFileName
-    # $TempFile = $PsScriptroot+"\"+$ExtOption.ExcelFileName+".bak"
+
+    If ($ExtOption.Debug){
+        StatusMsg $SourceFile "Yellow" $ExtOption
+    }
 
     If (Test-Path -Path $SourceFile -PathType Leaf){   #--[ Is there a valid source file? ]--
         StatusMsg "Source file located, copying to local folder..." "Magenta" $ExtOption  
@@ -398,15 +438,10 @@ If (Test-Path -Path "$PSScriptroot\IPList.txt"){
             StatusMsg "Source file copy failed..." "Red" $ExtOption
         }
     }Else{ 
+        StatusMsg "Source file NOT located, checking local folder..." "Red" $ExtOption 
         If (Test-Path -Path $LocalFile -PathType Leaf){
             StatusMsg "Local file detected, loading it..." "Magenta" $ExtOption
-            #Rename-Item $LocalFile -NewName $TempFile
             $Source = $LocalFile
-            #Start-Sleep -sec 1
-   #         }ElseIf (Test-Path -Path $TempFile -PathType Leaf){
-   #             StatusMsg "Local backup file detected, renaming and loading it..." "Magenta" $ExtOption
-   #             Rename-Item $TempFile -NewName $LocalFile
-   #             $Source = $LocalFile
         }Else{
             StatusMsg "No target file can be located.  Exiting..." "Red" $ExtOption
             break;break;break
@@ -469,15 +504,12 @@ If (Test-Path -Path "$PSScriptroot\IPList.txt"){
     } Until (
         $WorkSheet.Cells.Item($Row,2).Text -eq ""   #--[ Condition that stops the loop if it returns true ]--
     )
-
     If ($Counter -eq 0){
         $IPlist = "No Entries"
     }
-
     If ($ExtOption.ConsoleState){Write-Host ""}
     $Msg = "$Counter Total IP addresses detected."
     StatusMsg $Msg "Magenta" $ExtOption
-    If ($ExtOption.ConsoleState){Write-Host ""}
     $Excel.DisplayAlerts = $false
     Try{
         $WorkBook.Close($true)
@@ -487,6 +519,32 @@ If (Test-Path -Path "$PSScriptroot\IPList.txt"){
         StatusMsg $_.Exception.Message "red" $ExtOption
     }
     $TargetList = $IPlist
+}
+
+#==[ Remote Execution:  Create IP list and copy it to the remote execution server ]==
+If ($ExtOption.Remote -eq "true"){ 
+    $RemoteFile = "\\"+$ExtOption.RemoteHost+"\"+$ExtOption.RemotePath+"\IPList.txt"
+    If ($ExtOption.Debug){
+        $Msg = "Remote IP List = "+$RemoteFile
+        StatusMsg $Msg "Yellow" $ExtOption
+    }
+    Try{
+        If (Test-Path -Path $RemoteFile -PathType Leaf){
+            Remove-Item $RemoteFile -Force
+        }
+        Add-Content -Path $RemoteFile -Value $TargetList -force 
+        $Msg = "Ricoh Printer Audit remote IP file update successful..."
+        StatusMsg $Msg  "Green" $ExtOption
+    }Catch{
+        $Msg = "Ricoh Printer Audit remote IP file delete/create has failed..."
+        StatusMsg $Msg "Red" $ExtOption
+        Break;Break;Break
+    }
+    $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "Alert" -Value $True
+    $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "EmailRecipient" -Value $ExtOption.EmailAltRecipient
+    SendEmail $Msg $ExtOption
+    If ($ExtOption.ConsoleState){Write-Host "`n--- Completed ---" -foregroundcolor red}
+    Break;Break;Break
 }
 
 $ColSpan = 15
@@ -527,7 +585,7 @@ $HtmlData += '<tr><td colspan='+$ColSpan+'><center><h2 style="color: DarkCyan"><
 If ($ExtOption.ConsoleState){
     $HtmlData += '<tr><td colspan='+$ColSpan+'><center><font color=Magenta>--- Script running in Console/Debug mode ---</center></td></tr>'
 }
-$HtmlData += '<tr><td colspan='+$ColSpan+'><center><font color=black>Levels displayed below indicate toner percent remaining.&nbsp;&nbsp;&nbsp;Alert triggered at levels below '+$TriggerLevel+'%.</center></td></tr>'
+$HtmlData += '<tr><td colspan='+$ColSpan+'><center><font color=black>Levels displayed below indicate toner percent remaining.&nbsp;&nbsp;&nbsp;Alert triggered at levels below '+$ExtOption.TriggerLevel+'%.</center></td></tr>'
 
 If ($Null -eq $TargetList){
         StatusMsg "There was an error with the target list." "red" $ExtOption
@@ -549,10 +607,11 @@ If ($Null -eq $TargetList){
     $HtmlData += '<td><center>IP Address</td><td><center>Contact</td><td><center>Department</td>'
     $HtmlData += '<td><center>Building</td><td><center>Address</td>'
     $HtmlData += '<td><center>Mfg</td><td>Model</td><td><center>Serial</td><td><center>Firmware</td></tr>'
+
     ForEach ($Target in $TargetList | Where-Object {$_.Substring(0,1) -ne "#"}){
         $Low = $False
         $InkOut = $False
-        If ($Console){Write-Host "" } #`nCurrent Target  :"$Target -ForegroundColor Yellow }
+        #If ($Console){Write-Host "" } #`nCurrent Target  :"$Target -ForegroundColor Yellow }
         $Obj = New-Object -TypeName psobject   #--[ Collection for Results ]--
         Try{
             If ($Null -eq $ExtOption.DNS){
@@ -584,16 +643,16 @@ If ($Null -eq $TargetList){
         $Obj | Add-Member -MemberType NoteProperty -Name "Department" -Value $Target.Split(";")[2] -force  
         $Obj | Add-Member -MemberType NoteProperty -Name "Building" -Value $Target.Split(";")[3] -force
         $Obj | Add-Member -MemberType NoteProperty -Name "Address" -Value $Target.Split(";")[4] -force    
-            
+
         If (Test-Connection -ComputerName $Target.Split(";")[0] -count 1 -BufferSize 16 -Quiet){  #--[ Ping Test ]--
             $Obj | Add-Member -MemberType NoteProperty -Name "Connection" -Value "Online" -force
             $Msg = "Querying SNMP on "+$Target.Split(";")[0]+"..."
             StatusMsg $Msg "Yellow" $ExtOption
-            If ($Console){Write-Host "  Working." -NoNewline}
+            If ($Console){Write-Host "     Working." -NoNewline}
             ForEach ($OID in $OIDArray){     
                 If ($Obj.Connection -eq "Online"){  #--[ Only process OIDs if online  ]--------------------------
                     $Result = GetSNMPv1 $Target.Split(";")[0] $OID $False #$Script:v3UserTest
-                    Write-Host "." -NoNewline
+                    If ($Console){Write-Host "." -NoNewline -ForegroundColor cyan}
                 }Else{
                     $Result = "N/A"
                 }             
@@ -632,12 +691,13 @@ If ($Null -eq $TargetList){
                     } #           
                 }
             }
-            If ($ExtOption.ConsoleState){Write-Host "."}
+            If ($Console){Write-Host " "}
         }Else{
             $Obj | Add-Member -MemberType NoteProperty -Name "Connection" -Value "Offline" -force
         }
 
         If ($ExtOption.ConsoleState){
+            Write-Host " "
             If ($obj.HostNameLookup){
                 Write-Host "  Hostname :"$obj.Hostname -ForegroundColor Magenta
             }Else{
@@ -662,6 +722,7 @@ If ($Null -eq $TargetList){
             Write-Host "    Cyan % :"$obj.CyanLevel -ForegroundColor Magenta
             Write-Host " Magenta % :"$obj.MagentaLevel -ForegroundColor Magenta
             Write-Host "  Yellow % :"$obj.YellowLevel -ForegroundColor Magenta
+            Write-Host " "
         }
 
         $HtmlData += '<tr>'
@@ -670,7 +731,7 @@ If ($Null -eq $TargetList){
         }Else{
             $StatusCol = '<td><font color=green>'+$Obj.Connection+'</font></td>'
         }
-        If ($Obj.BlackLevel -le $TriggerLevel){
+        If ($Obj.BlackLevel -le $ExtOption.TriggerLevel){
             $BlackCol = '<td><strong><font color=red>'+$Obj.BlackLevel+'</strong></font></td>'
             $Low = $True
             If ([Int]$Obj.BlackLevel -le 0){
@@ -680,7 +741,7 @@ If ($Null -eq $TargetList){
         }Else{
             $BlackCol = '<td>'+$Obj.BlackLevel+'</td>'
         }   
-        If ($Obj.CyanLevel -le $TriggerLevel){
+        If ($Obj.CyanLevel -le $ExtOption.TriggerLevel){
             $CyanCol = '<td><strong><font color=red>'+$Obj.CyanLevel+'</strong></font></td>'
             $Low = $True
             If ([Int]$Obj.CyanLevel -le 0){
@@ -690,7 +751,7 @@ If ($Null -eq $TargetList){
         }Else{
             $CyanCol = '<td>'+$Obj.CyanLevel+'</td>'
         }
-        If ($Obj.MagentaLevel -le $TriggerLevel){
+        If ($Obj.MagentaLevel -le $ExtOption.TriggerLevel){
             $MagCol = '<td><strong><font color=red>'+$Obj.MagentaLevel+'</strong></font></td>'
             $Low = $True        
             If ([Int]$Obj.MagentaLevel -le 0){
@@ -700,7 +761,7 @@ If ($Null -eq $TargetList){
         }Else{
             $MagCol = '<td>'+$Obj.MagentaLevel+'</td>'
         }
-        If ($Obj.YellowLevel -le $TriggerLevel){
+        If ($Obj.YellowLevel -le $ExtOption.TriggerLevel){
             $YellowCol = '<td><strong><font color=red>'+$Obj.YellowLevel+'</strong></font></td>'
             $Low = $True
             If ([Int]$Obj.YellowLevel -le 0){
