@@ -22,20 +22,20 @@
                    : <?xml version="1.0" encoding="utf-8"?>
                    :    <Settings>
                    :        <General>
-	          :            <TriggerLevel>20</TriggerLevel>       <!-- NOTE: Level at which toner triggers alert -->
-	          :		    <DNS>8.8.8.8</DNS>
-	          :            <SmtpServer>mymail.myorg.com</SmtpServer>
-	          :            <SmtpPort>25</SmtpPort>
-	          :		    <EmailRecipient>groupemail@myorg.com</EmailRecipient>
-	          :		    <EmailAltRecipient>me@myorg.com</EmailAltRecipient>
-	          :		    <EmailSender>RicohPrinters@myorg.com</EmailSender>
-	          :		    <ExcelFileName>Ricoh_Master_Inventory.xlsx</ExcelFileName>
-	          :		    <ExcelFilePath>C:\Users\me\Documents\Ricoh</ExcelFilePath>
-	          :            <Remote>false</Remote>
-	          :	        <RemoteHost>server01</RemoteHost>
-	          :	        <RemotePath>c$\scripts\ricohaudit</RemotePath>
-	          :        </General>
-	          :    </Settings> 
+	           :            <TriggerLevel>20</TriggerLevel>       <!-- NOTE: Level at which toner triggers alert -->
+	           :		    <DNS>8.8.8.8</DNS>
+	           :            <SmtpServer>mymail.myorg.com</SmtpServer>
+	           :            <SmtpPort>25</SmtpPort>
+	           :		    <EmailRecipient>groupemail@myorg.com</EmailRecipient>
+	           :		    <EmailAltRecipient>me@myorg.com</EmailAltRecipient>
+	           :		    <EmailSender>RicohPrinters@myorg.com</EmailSender>
+	           :		    <ExcelFileName>Ricoh_Master_Inventory.xlsx</ExcelFileName>
+	           :		    <ExcelFilePath>C:\Users\me\Documents\Ricoh</ExcelFilePath>
+	           :            <Remote>false</Remote>
+	           :	        <RemoteHost>server01</RemoteHost>
+	           :	        <RemotePath>c$\scripts\ricohaudit</RemotePath>
+	           :        </General>
+	           :    </Settings> 
                    :                   
       Requirements : PowerShell v5 or newer.  
                    : Net-SNMP available in your path.  http://www.net-snmp.org/
