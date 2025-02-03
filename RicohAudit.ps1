@@ -217,7 +217,6 @@ Function SendEmail ($MessageBody,$ExtOption) {
         }
     }
 
-$email.to.add("maziekc@ah.org")
     $Email.Subject = "Ricoh Printer Status Report"
     $Email.Body = $MessageBody
 
