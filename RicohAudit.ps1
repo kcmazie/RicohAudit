@@ -77,6 +77,7 @@
                    :                  - handling, adjusted email send options, moved triggerlevel to
                    :                  - XML file, switched to per-run log file and 10 copy retention,
                    :                  - added log file to email as an attachment when remote is true. 
+                   : v5.10 - 02-03-25 - Fixed email send when remote = true
                    :
 #===============================================================================#>
 #requires -version 5.0
@@ -202,22 +203,27 @@ Function SendEmail ($MessageBody,$ExtOption) {
         $Email.Priority = "High"
     }
 
-    If ($ExtOption.ConsoleState){  #--[ If running out of an IDE console, send only to the user for testing ]-- 
-        $Email.To.Add($ExtOption.EmailAltRecipient)         
-        $Email.Attachments.Add($ExtOption.LogFile)
+    If ($ExtOption.Remote -eq "true"){
+        $Email.To.Add($ExtOption.EmailAltRecipient) 
+        $Email.Subject = "Ricoh Printer Inventory Update Report"
     }Else{
-        If (($ExtOption.Alert) -or ($ExtOption.Priority)){  #--[ If a device failed self-test or trigger day is matched send to main recipient ]--
-            $Email.To.Add($ExtOption.EmailRecipient)  
-            #$Email.To.Add($ExtOption.EmailAltRecipient)    #--[ In case this user isn't part of the group email ]--  
-            ForEach ($Address in ($ExtOption.AddEmail.split(";"))){
-                If ($Address -ne ""){
-                    $Email.To.Add($Address)
+        $Email.Subject = "Ricoh Printer Status Report"
+        If ($ExtOption.ConsoleState){  #--[ If running out of an IDE console, send only to the user for testing ]-- 
+            $Email.To.Add($ExtOption.EmailAltRecipient)         
+            $Email.Attachments.Add($ExtOption.LogFile)
+        }Else{
+            If (($ExtOption.Alert) -or ($ExtOption.Priority)){  #--[ If a device failed self-test or trigger day is matched send to main recipient ]--
+                $Email.To.Add($ExtOption.EmailRecipient)  
+                #$Email.To.Add($ExtOption.EmailAltRecipient)    #--[ In case this user isn't part of the group email ]--  
+                ForEach ($Address in ($ExtOption.AddEmail.split(";"))){
+                    If ($Address -ne ""){
+                        $Email.To.Add($Address)
+                    }
                 }
             }
         }
     }
 
-    $Email.Subject = "Ricoh Printer Status Report"
     $Email.Body = $MessageBody
 
     Try {
