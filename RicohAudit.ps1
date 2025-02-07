@@ -78,6 +78,7 @@
                    :                  - XML file, switched to per-run log file and 10 copy retention,
                    :                  - added log file to email as an attachment when remote is true. 
                    : v5.10 - 02-03-25 - Fixed email send when remote = true
+                   : v5.20 - 02-07-25 - Added more info to remote operation email.
                    :
 #===============================================================================#>
 #requires -version 5.0
@@ -529,16 +530,28 @@ If (Test-Path -Path "$PSScriptroot\IPList.txt"){
 #==[ Remote Execution:  Create IP list and copy it to the remote execution server ]==
 If ($ExtOption.Remote -eq "true"){ 
     $RemoteFile = "\\"+$ExtOption.RemoteHost+"\"+$ExtOption.RemotePath+"\IPList.txt"
-    If ($ExtOption.Debug){
-        $Msg = "Remote IP List = "+$RemoteFile
-        StatusMsg $Msg "Yellow" $ExtOption
-    }
+    $Msg = "Current remote IP filename        = $RemoteFile"
+    $RmtMsg = $Msg+"<br>"
+    StatusMsg $Msg  "Cyan" $ExtOption
     Try{
         If (Test-Path -Path $RemoteFile -PathType Leaf){
+            $RemoteDate = (get-item $RemoteFile).LastWriteTime
+            $Msg = "Current remote IP file date stamp = $RemoteDate"
+            $RmtMsg += $Msg+"<br>"
+            StatusMsg $Msg  "Cyan" $ExtOption
             Remove-Item $RemoteFile -Force
+            Start-Sleep -sec 2
+            $Msg = "Current remote IP file deleted successfully..."
+            $RmtMsg += $Msg+"<br>"
+            StatusMsg $Msg  "Cyan" $ExtOption
         }
         Add-Content -Path $RemoteFile -Value $TargetList -force 
+        $RemoteDate = (get-item $RemoteFile).LastWriteTime
+        $Msg = "New remote IP file date stamp     = $RemoteDate"
+        $RmtMsg += $Msg+"<br>"
+        StatusMsg $Msg  "Cyan" $ExtOption
         $Msg = "Ricoh Printer Audit remote IP file update successful..."
+        $RmtMsg += $Msg
         StatusMsg $Msg  "Green" $ExtOption
     }Catch{
         $Msg = "Ricoh Printer Audit remote IP file delete/create has failed..."
@@ -547,7 +560,7 @@ If ($ExtOption.Remote -eq "true"){
     }
     $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "Alert" -Value $True
     $ExtOption | Add-Member -Force -MemberType NoteProperty -Name "EmailRecipient" -Value $ExtOption.EmailAltRecipient
-    SendEmail $Msg $ExtOption
+    SendEmail $RmtMsg $ExtOption
     If ($ExtOption.ConsoleState){Write-Host "`n--- Completed ---" -foregroundcolor red}
     Break;Break;Break
 }
