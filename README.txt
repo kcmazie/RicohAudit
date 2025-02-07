@@ -77,4 +77,5 @@
                    :                  - XML file, switched to per-run log file and 10 copy retention,
                    :                  - added log file to email as an attachment when remote is true. 
                    : v5.10 - 02-03-25 - Fixed email send when remote = true
+                   : v5.20 - 02-07-25 - Added more info to remote operation email.
                    :
